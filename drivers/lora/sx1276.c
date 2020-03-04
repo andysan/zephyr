@@ -27,6 +27,8 @@ LOG_MODULE_REGISTER(sx1276);
 #define SX1276_REG_PA_DAC			0x4d
 #define SX1276_REG_VERSION			0x42
 
+#define BOARD_TCXO_WAKEUP_TIME	5
+
 static u32_t saved_time;
 extern DioIrqHandler *DioIrq[];
 
@@ -60,13 +62,15 @@ struct sx1276_data {
 	struct k_sem data_sem;
 	struct k_timer timer;
 	RadioEvents_t sx1276_event;
+	/* TODO: Use Non-volatile memory for backup */
+	volatile u32_t backup_reg[2];
 	u8_t *rx_buf;
 	u8_t rx_len;
 	s8_t snr;
 	s16_t rssi;
 } dev_data;
 
-bool SX1276CheckRfFrequency(uint32_t frequency)
+bool SX1276CheckRfFrequency(u32_t frequency)
 {
 	/* TODO */
 	return true;
@@ -80,6 +84,11 @@ void SX1276SetAntSwLowPower(bool status)
 void SX1276SetBoardTcxo(u8_t state)
 {
 	/* TODO */
+}
+
+u32_t SX1276GetBoardTcxoWakeupTime(void)
+{
+	return BOARD_TCXO_WAKEUP_TIME;
 }
 
 void SX1276SetAntSw(u8_t opMode)
@@ -99,12 +108,12 @@ void SX1276Reset(void)
 	k_sleep(K_MSEC(6));
 }
 
-void BoardCriticalSectionBegin(uint32_t *mask)
+void BoardCriticalSectionBegin(u32_t *mask)
 {
 	*mask = irq_lock();
 }
 
-void BoardCriticalSectionEnd(uint32_t *mask)
+void BoardCriticalSectionEnd(u32_t *mask)
 {
 	irq_unlock(*mask);
 }
@@ -174,6 +183,28 @@ static void sx1276_dio_work_handle(struct k_work *work)
 	int dio = work - dev_data.dio_work;
 
 	(*DioIrq[dio])(NULL);
+}
+
+u32_t RtcGetCalendarTime(uint16_t *milliseconds)
+{
+	u32_t now = k_uptime_get_32();
+
+	*milliseconds = now;
+
+	/* Return in seconds */
+	return now / MSEC_PER_SEC;
+}
+
+void RtcBkupWrite(u32_t data0, uint32_t data1)
+{
+	dev_data.backup_reg[0] = data0;
+	dev_data.backup_reg[1] = data1;
+}
+
+void RtcBkupRead(u32_t *data0, uint32_t *data1)
+{
+	*data0 = dev_data.backup_reg[0];
+	*data1 = dev_data.backup_reg[1];
 }
 
 static void sx1276_irq_callback(struct device *dev,
@@ -463,6 +494,7 @@ const struct Radio_s Radio = {
 	.Random = SX1276Random,
 	.SetRxConfig = SX1276SetRxConfig,
 	.SetTxConfig = SX1276SetTxConfig,
+	.TimeOnAir = SX1276GetTimeOnAir,
 	.Send = SX1276Send,
 	.Sleep = SX1276SetSleep,
 	.Standby = SX1276SetStby,
@@ -472,6 +504,8 @@ const struct Radio_s Radio = {
 	.WriteBuffer = SX1276WriteBuffer,
 	.ReadBuffer = SX1276ReadBuffer,
 	.SetMaxPayloadLength = SX1276SetMaxPayloadLength,
+	.SetPublicNetwork = SX1276SetPublicNetwork,
+	.GetWakeupTime = SX1276GetWakeupTime,
 	.IrqProcess = NULL,
 	.RxBoosted = NULL,
 	.SetRxDutyCycle = NULL,
