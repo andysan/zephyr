@@ -54,6 +54,7 @@ void main(void)
 	mib_config.nwk_key = app_key;
 	mib_config.pub_nw = true; /* Connecting to a public network */
 	mib_config.adr_enable = true;
+	mib_config.system_max_rs_error = 20;
 
 	LOG_INF("Configuring LoRaWAN stack");
 	ret = lorawan_config(&mib_config);
