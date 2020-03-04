@@ -328,6 +328,7 @@
 /include/logging/                         @nordic-krch
 /include/net/                             @jukkar @tbursztyka @pfalcon
 /include/net/buf.h                        @jukkar @jhedberg @tbursztyka @pfalcon
+/include/net/lorawan.h                    @Mani-Sadhasivam
 /include/posix/                           @pfalcon
 /include/power/power.h                    @wentongwu @nashif
 /include/ptp_clock.h                      @jukkar
@@ -361,6 +362,7 @@
 /samples/drivers/display/                 @vanwinkeljan
 /samples/drivers/ht16k33/                 @henrikbrixandersen
 /samples/drivers/lora/                    @Mani-Sadhasivam
+/samples/lorawan/                         @Mani-Sadhasivam
 /samples/net/                             @jukkar @tbursztyka @pfalcon
 /samples/net/dns_resolve/                 @jukkar @tbursztyka @pfalcon
 /samples/net/lwm2m_client/                @mike-scott
@@ -418,6 +420,7 @@
 /subsys/fs/nvs/                           @Laczen
 /subsys/logging/                          @nordic-krch
 /subsys/logging/log_backend_net.c         @nordic-krch @jukkar
+/subsys/lorawan/                          @Mani-Sadhasivam
 /subsys/mgmt/                             @carlescufi @nvlsianpu
 /subsys/net/buf.c                         @jukkar @jhedberg @tbursztyka @pfalcon
 /subsys/net/ip/                           @jukkar @tbursztyka @pfalcon
