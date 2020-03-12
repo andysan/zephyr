@@ -39,14 +39,11 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(lorawan);
 
-K_SEM_DEFINE(lorawan_config_sem, 0, 1);
-K_SEM_DEFINE(lorawan_tx_sem, 0, 1);
+K_SEM_DEFINE(mlme_confirm_sem, 0, 1);
+K_SEM_DEFINE(mcps_confirm_sem, 0, 1);
 
 K_MUTEX_DEFINE(lorawan_join_mutex);
 K_MUTEX_DEFINE(lorawan_send_mutex);
-
-static volatile bool join_status = false;
-static volatile bool send_status = false;
 
 const char *status2str(int status)
 {
@@ -146,29 +143,92 @@ const char *eventinfo2str(int status)
 	}
 }
 
+/*
+ * MAC status and Event status to Zephyr error code conversion.
+ * Direct mapping is not possible as statuses often indicate the domain from
+ * which the error originated rather than its cause or meaning. -EINVAL has been
+ * used as a general error code because those usually result from incorrect
+ * configuration.
+ */
+const int mac_status_to_errno[] = {
+	0,			/* LORAMAC_STATUS_OK */
+	-EBUSY,			/* LORAMAC_STATUS_BUSY */
+	-ENOPROTOOPT,		/* LORAMAC_STATUS_SERVICE_UNKNOWN */
+	-EINVAL,		/* LORAMAC_STATUS_PARAMETER_INVALID */
+	-EINVAL,		/* LORAMAC_STATUS_FREQUENCY_INVALID */
+	-EINVAL,		/* LORAMAC_STATUS_DATARATE_INVALID */
+	-EINVAL,		/* LORAMAC_STATUS_FREQ_AND_DR_INVALID */
+	-ENOTCONN,		/* LORAMAC_STATUS_NO_NETWORK_JOINED */
+	-EMSGSIZE,		/* LORAMAC_STATUS_LENGTH_ERROR */
+	-EPFNOSUPPORT,		/* LORAMAC_STATUS_REGION_NOT_SUPPORTED */
+	-EMSGSIZE,		/* LORAMAC_STATUS_SKIPPED_APP_DATA */
+	-ECONNREFUSED,		/* LORAMAC_STATUS_DUTYCYCLE_RESTRICTED */
+	-ENOTCONN,		/* LORAMAC_STATUS_NO_CHANNEL_FOUND */
+	-ENOTCONN,		/* LORAMAC_STATUS_NO_FREE_CHANNEL_FOUND */
+	-EBUSY,			/* LORAMAC_STATUS_BUSY_BEACON_RESERVED_TIME */
+	-EBUSY,			/* LORAMAC_STATUS_BUSY_PING_SLOT_WINDOW_TIME */
+	-EBUSY,			/* LORAMAC_STATUS_BUSY_UPLINK_COLLISION */
+	-EINVAL,		/* LORAMAC_STATUS_CRYPTO_ERROR */
+	-EINVAL,		/* LORAMAC_STATUS_FCNT_HANDLER_ERROR */
+	-EINVAL,		/* LORAMAC_STATUS_MAC_COMMAD_ERROR */
+	-EINVAL,		/* LORAMAC_STATUS_CLASS_B_ERROR */
+	-EINVAL,		/* LORAMAC_STATUS_CONFIRM_QUEUE_ERROR */
+	-EINVAL			/* LORAMAC_STATUS_MC_GROUP_UNDEFINED */
+};
+
+const int mac_event_info_to_errno[] = {
+	0,			/* LORAMAC_EVENT_INFO_STATUS_OK */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_ERROR */
+	-ETIMEDOUT,		/* LORAMAC_EVENT_INFO_STATUS_TX_TIMEOUT */
+	-ETIMEDOUT,		/* LORAMAC_EVENT_INFO_STATUS_RX1_TIMEOUT */
+	-ETIMEDOUT,		/* LORAMAC_EVENT_INFO_STATUS_RX2_TIMEOUT */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_RX1_ERROR */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_RX2_ERROR */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_JOIN_FAIL */
+	-ECONNRESET,		/* LORAMAC_EVENT_INFO_STATUS_DOWNLINK_REPEATED */
+	-EMSGSIZE,		/* LORAMAC_EVENT_INFO_STATUS_TX_DR_PAYLOAD_SIZE_ERROR */
+	-ECONNRESET,		/* LORAMAC_EVENT_INFO_STATUS_DOWNLINK_TOO_MANY_FRAMES_LOSS */
+	-EACCES,		/* LORAMAC_EVENT_INFO_STATUS_ADDRESS_FAIL */
+	-EACCES,		/* LORAMAC_EVENT_INFO_STATUS_MIC_FAIL */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_MULTICAST_FAIL */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_BEACON_LOCKED */
+	-EINVAL,		/* LORAMAC_EVENT_INFO_STATUS_BEACON_LOST */
+	-EINVAL			/* LORAMAC_EVENT_INFO_STATUS_BEACON_NOT_FOUND */
+};
+
 static LoRaMacPrimitives_t macPrimitives;
 static LoRaMacCallback_t macCallbacks;
 
-void OnMacProcessNotify(void)
+static LoRaMacEventInfoStatus_t last_mcps_confirm_status;
+static LoRaMacEventInfoStatus_t last_mlme_confirm_status;
+static LoRaMacEventInfoStatus_t last_mcps_indication_status;
+static LoRaMacEventInfoStatus_t last_mlme_indication_status;
+
+static void OnMacProcessNotify(void)
 {
 	LoRaMacProcess();
 }
 
 static void McpsConfirm(McpsConfirm_t *mcpsConfirm)
 {
+	LOG_DBG("Received McpsConfirm (for McpsRequest %d)",
+		mcpsConfirm->McpsRequest);
+
 	if (mcpsConfirm->Status != LORAMAC_EVENT_INFO_STATUS_OK) {
 		LOG_ERR("McpsRequest failed : %s",
 			log_strdup(eventinfo2str(mcpsConfirm->Status)));
 	} else {
 		LOG_DBG("McpsRequest success!");
-		send_status = true;
 	}
 
-	k_sem_give(&lorawan_tx_sem);
+	last_mcps_confirm_status = mcpsConfirm->Status;
+	k_sem_give(&mcps_confirm_sem);
 }
 
 static void McpsIndication(McpsIndication_t *mcpsIndication)
 {
+	LOG_DBG("Received McpsIndication %d", mcpsIndication->McpsIndication);
+
 	if (mcpsIndication->Status != LORAMAC_EVENT_INFO_STATUS_OK) {
 		LOG_ERR("McpsIndication failed : %s",
 			log_strdup(eventinfo2str(mcpsIndication->Status)));
@@ -183,12 +243,17 @@ static void McpsIndication(McpsIndication_t *mcpsIndication)
 		}
 	}
 
+	last_mcps_indication_status = mcpsIndication->Status;
+
 	/* TODO: Compliance test based on FPort value*/
 }
 
 static void MlmeConfirm(MlmeConfirm_t *mlmeConfirm)
 {
 	MibRequestConfirm_t mibGet;
+
+	LOG_DBG("Received MlmeConfirm (for MlmeRequest %d)",
+		mlmeConfirm->MlmeRequest);
 
 	if (mlmeConfirm->Status != LORAMAC_EVENT_INFO_STATUS_OK) {
 		LOG_ERR("MlmeConfirm failed : %s",
@@ -201,7 +266,6 @@ static void MlmeConfirm(MlmeConfirm_t *mlmeConfirm)
 		mibGet.Type = MIB_DEV_ADDR;
 		LoRaMacMibGetRequestConfirm(&mibGet);
 		LOG_INF("Joined network! DevAddr: %08x", mibGet.Param.DevAddr);
-		join_status = true;
 		break;
 	case MLME_LINK_CHECK:
 		/* Not implemented */
@@ -211,12 +275,14 @@ static void MlmeConfirm(MlmeConfirm_t *mlmeConfirm)
 	}
 
 out_sem:
-	k_sem_give(&lorawan_config_sem);
+	last_mlme_confirm_status = mlmeConfirm->Status;
+	k_sem_give(&mlme_confirm_sem);
 }
 
 static void MlmeIndication(MlmeIndication_t *mlmeIndication)
 {
-	LOG_DBG("%s", __func__);
+	LOG_DBG("Received MlmeIndication %d", mlmeIndication->MlmeIndication);
+	last_mlme_indication_status = mlmeIndication->Status;
 }
 
 int lorawan_config(struct lorawan_mib_config *mib_config)
@@ -268,17 +334,16 @@ int lorawan_join_network(enum lorawan_datarate datarate,
 			 enum lorawan_act_type mode)
 {
 	LoRaMacStatus_t status;
-	int ret;
+	int ret = 0;
 
 	k_mutex_lock(&lorawan_join_mutex, K_FOREVER);
 
 	if (mode == LORAWAN_ACT_OTAA) {
-		join_status = false;
 		status = lorawan_join_otaa(datarate);
 		if (status != LORAMAC_STATUS_OK) {
 			LOG_ERR("OTAA join failed: %s",
 				log_strdup(status2str(status)));
-			ret = -EINVAL;
+			ret = mac_status_to_errno[status];
 			goto out;
 		}
 
@@ -289,16 +354,12 @@ int lorawan_join_network(enum lorawan_datarate datarate,
 		 * both success and failure cases after a specific time period.
 		 * So we can use K_FOREVER and no need to check the return val.
 		 */
-		k_sem_take(&lorawan_config_sem, K_FOREVER);
+		k_sem_take(&mlme_confirm_sem, K_FOREVER);
+		if (last_mlme_confirm_status != LORAMAC_EVENT_INFO_STATUS_OK) {
+			ret = mac_event_info_to_errno[last_mlme_confirm_status];
+			goto out;
+		}
 	} else {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (join_status) {
-		ret = 0;
-	} else {
-		/* TODO: Return the exact error code */
 		ret = -EINVAL;
 	}
 
@@ -331,7 +392,7 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 		 * frame in order to flush MAC commands in stack and hoping the
 		 * application to lower the payload size for next try.
 		 */
-		LOG_ERR("LoRaWAN Send failed: %s",
+		LOG_ERR("LoRaWAN Query Tx Possible Failed: %s",
 			log_strdup(status2str(status)));
 		empty_frame = true;
 		mcpsReq.Type = MCPS_UNCONFIRMED;
@@ -352,7 +413,6 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 			mcpsReq.Req.Confirmed.fBufferSize = len;
 			mcpsReq.Req.Confirmed.NbTrials = tries;
 			mcpsReq.Req.Confirmed.Datarate = datarate;
-			send_status = false;
 		}
 	}
 
@@ -360,7 +420,7 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 	if (status != LORAMAC_STATUS_OK) {
 		LOG_ERR("LoRaWAN Send failed: %s",
 			log_strdup(status2str(status)));
-		ret = -EINVAL;
+		ret = mac_status_to_errno[status];
 		goto out;
 	}
 
@@ -380,13 +440,10 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 		 * both success and failure cases after a specific time period.
 		 * So we can use K_FOREVER and no need to check the return val.
 		 */
-		k_sem_take(&lorawan_tx_sem, K_FOREVER);
+		k_sem_take(&mcps_confirm_sem, K_FOREVER);
 
-		if (send_status) {
-			ret = 0;
-		} else {
-			/* TODO: Return the exact error code */
-			ret = -EINVAL;
+		if (last_mcps_confirm_status != LORAMAC_EVENT_INFO_STATUS_OK) {
+			ret = mac_event_info_to_errno[last_mcps_confirm_status];
 		}
 	}
 
