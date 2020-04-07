@@ -22,6 +22,15 @@ LOG_MODULE_REGISTER(sx1276);
 #define GPIO_RESET_FLAGS	DT_INST_GPIO_FLAGS(0, reset_gpios)
 #define GPIO_CS_PIN		DT_INST_SPI_DEV_CS_GPIOS_PIN(0)
 
+#define PA_PIN			DT_ENUM_IDX(DT_DRV_INST(0),	\
+					    power_amplifier_output)
+
+/*
+ * Those macros must be in sync with 'power-amplifier-output' dts property.
+ */
+#define SX1276_PA_RFO		0
+#define SX1276_PA_BOOST		1
+
 #define SX1276_REG_PA_CONFIG			0x09
 #define SX1276_REG_PA_DAC			0x4d
 #define SX1276_REG_VERSION			0x42
@@ -299,7 +308,7 @@ void SX1276SetRfTxPower(int8_t power)
 	pa_config = (pa_config & RF_PACONFIG_MAX_POWER_MASK) | 0x70;
 	pa_config &= RF_PACONFIG_PASELECT_MASK;
 
-#if defined CONFIG_PA_BOOST_PIN
+#if PA_PIN == SX1276_PA_BOOST
 	pa_config |= RF_PACONFIG_PASELECT_PABOOST;
 
 	if (power > 17) {
@@ -327,7 +336,7 @@ void SX1276SetRfTxPower(int8_t power)
 		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
 			     ((power - 2) & 0x0F);
 	}
-#elif CONFIG_PA_RFO_PIN
+#elif PA_PIN == SX1276_PA_RFO
 	if (power < -1) {
 		power = -1;
 	} else if (power > 14) {
