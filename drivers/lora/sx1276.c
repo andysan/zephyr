@@ -313,29 +313,19 @@ void SX1276SetRfTxPower(int8_t power)
 
 	if (power > 17) {
 		pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) | RF_PADAC_20DBM_ON;
+		power -= 3;
 	} else {
 		pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) | RF_PADAC_20DBM_OFF;
 	}
 
-	if ((pa_dac & RF_PADAC_20DBM_ON) == RF_PADAC_20DBM_ON) {
-		if (power < 5) {
-			power = 5;
-		} else if (power > 20) {
-			power = 20;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			     ((power - 5) & 0x0F);
-	} else {
-		if (power < 2) {
-			power = 2;
-		} else if (power > 17) {
-			power = 17;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			     ((power - 2) & 0x0F);
+	if (power > 17) {
+		power = 17;
+	} else if (power < 2) {
+		power = 2;
 	}
+
+	pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
+		((power - 2) & 0x0F);
 #elif PA_PIN == SX1276_PA_RFO
 	if (power < -1) {
 		power = -1;
