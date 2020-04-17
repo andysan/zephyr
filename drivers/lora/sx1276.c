@@ -27,6 +27,8 @@ LOG_MODULE_REGISTER(sx1276);
 #define SX1276_REG_PA_DAC			0x4d
 #define SX1276_REG_VERSION			0x42
 
+#define SX1276_PA_CONFIG_MAX_POWER_SHIFT	4
+
 static u32_t saved_time;
 extern DioIrqHandler *DioIrq[];
 
@@ -65,6 +67,17 @@ struct sx1276_data {
 	s8_t snr;
 	s16_t rssi;
 } dev_data;
+
+static s8_t clamp_s8(s8_t x, s8_t min, s8_t max)
+{
+	if (x < min) {
+		return min;
+	} else if (x > max) {
+		return max;
+	} else {
+		return x;
+	}
+}
 
 bool SX1276CheckRfFrequency(uint32_t frequency)
 {
@@ -308,47 +321,37 @@ void SX1276SetRfTxPower(int8_t power)
 		return;
 	}
 
-	pa_config = (pa_config & RF_PACONFIG_MAX_POWER_MASK) | 0x70;
+	pa_config &= RF_PACONFIG_MAX_POWER_MASK;
+	pa_config &= RF_PACONFIG_OUTPUTPOWER_MASK;
 	pa_config &= RF_PACONFIG_PASELECT_MASK;
 
+	pa_dac &= RF_PADAC_20DBM_MASK;
+
 #if defined CONFIG_PA_BOOST_PIN
+	power = clamp_s8(power, 2, 20);
+
 	pa_config |= RF_PACONFIG_PASELECT_PABOOST;
-
 	if (power > 17) {
-		pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) | RF_PADAC_20DBM_ON;
+		pa_dac |= RF_PADAC_20DBM_ON;
+		pa_config |= (power - 5) & 0x0F;
 	} else {
-		pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) | RF_PADAC_20DBM_OFF;
-	}
-
-	if ((pa_dac & RF_PADAC_20DBM_ON) == RF_PADAC_20DBM_ON) {
-		if (power < 5) {
-			power = 5;
-		} else if (power > 20) {
-			power = 20;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			     ((power - 5) & 0x0F);
-	} else {
-		if (power < 2) {
-			power = 2;
-		} else if (power > 17) {
-			power = 17;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			     ((power - 2) & 0x0F);
+		pa_dac |= RF_PADAC_20DBM_OFF;
+		pa_config |= (power - 2) & 0x0F;
 	}
 #elif CONFIG_PA_RFO_PIN
-	if (power < -1) {
-		power = -1;
-	} else if (power > 14) {
-		power = 14;
-	}
+	power = clamp_s8(power, -4, 15);
 
-	pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			     ((power + 1) & 0x0F);
+	pa_dac |= RF_PADAC_20DBM_OFF;
+	if (power > 0) {
+		/* Set the power range to 0 -- 10.8+0.6*7 dBm. */
+		pa_config |= 7 << SX1276_PA_CONFIG_MAX_POWER_SHIFT;
+		pa_config |= (power & 0x0F);
+	} else {
+		/* Set the power range to -4.2 -- 10.8+0.6*0 dBm */
+		pa_config |= ((power + 4) & 0x0F);
+	}
 #endif
+
 	ret = sx1276_write(SX1276_REG_PA_CONFIG, &pa_config, 1);
 	if (ret < 0) {
 		LOG_ERR("Unable to write PA config");
