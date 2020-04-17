@@ -57,10 +57,17 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(semtech_sx1261) +
 #define GPIO_ANTENNA_ENABLE_FLAGS			\
 	DT_INST_GPIO_FLAGS(0, antenna_enable_gpios)
 
-#define DIO2_TX_ENABLE DT_INST_PROP(0, dio2_tx_enable)
+#define HAVE_GPIO_TX_ENABLE	DT_INST_NODE_HAS_PROP(0, tx_enable_gpios)
+#define GPIO_TX_ENABLE_LABEL	DT_INST_GPIO_LABEL(0, tx_enable_gpios)
+#define GPIO_TX_ENABLE_PIN	DT_INST_GPIO_PIN(0, tx_enable_gpios)
+#define GPIO_TX_ENABLE_FLAGS	DT_INST_GPIO_FLAGS(0, tx_enable_gpios)
 
-BUILD_ASSERT(DIO2_TX_ENABLE,
-	     "Modules without DIO2 TX control currently unsupported");
+#define HAVE_GPIO_RX_ENABLE	DT_INST_NODE_HAS_PROP(0, rx_enable_gpios)
+#define GPIO_RX_ENABLE_LABEL	DT_INST_GPIO_LABEL(0, rx_enable_gpios)
+#define GPIO_RX_ENABLE_PIN	DT_INST_GPIO_PIN(0, rx_enable_gpios)
+#define GPIO_RX_ENABLE_FLAGS	DT_INST_GPIO_FLAGS(0, rx_enable_gpios)
+
+#define DIO2_TX_ENABLE DT_INST_PROP(0, dio2_tx_enable)
 
 #define HAVE_DIO3_TCXO		DT_INST_NODE_HAS_PROP(0, dio3_tcxo_voltage)
 #if HAVE_DIO3_TCXO
@@ -76,6 +83,12 @@ BUILD_ASSERT(DIO2_TX_ENABLE,
 
 #define SX126X_CALIBRATION_ALL 0x7f
 
+enum sx126x_rf_state {
+	SX126X_RF_IDLE = 0,
+	SX126X_RF_RX,
+	SX126X_RF_TX,
+};
+
 struct sx126x_data {
 	struct device *reset;
 	struct device *busy;
@@ -86,15 +99,134 @@ struct sx126x_data {
 #if HAVE_GPIO_ANTENNA_ENABLE
 	struct device *antenna_enable;
 #endif
+#if HAVE_GPIO_TX_ENABLE
+	struct device *tx_enable;
+#endif
+#if HAVE_GPIO_RX_ENABLE
+	struct device *rx_enable;
+#endif
 	struct device *spi;
 	struct spi_config spi_cfg;
 #if HAVE_GPIO_CS
 	struct spi_cs_control spi_cs;
 #endif
+	enum sx126x_rf_state rf_state;
 } dev_data;
 
 
 void SX126xWaitOnBusy(void);
+
+static void sx126x_set_tx_enable(int value)
+{
+#if HAVE_GPIO_TX_ENABLE
+	gpio_pin_set(dev_data.tx_enable, GPIO_TX_ENABLE_PIN, value);
+#endif
+}
+
+static void sx126x_set_rx_enable(int value)
+{
+#if HAVE_GPIO_RX_ENABLE
+	gpio_pin_set(dev_data.rx_enable, GPIO_RX_ENABLE_PIN, value);
+#endif
+}
+
+static void sx126x_set_rf_state(enum sx126x_rf_state rf)
+{
+	if (rf == dev_data.rf_state)
+		return;
+
+	dev_data.rf_state = rf;
+
+	/* To avoid inadvertently putting the RF switch in an
+	 * undefined state, first disable the port we don't want to
+	 * use and then enable the other one.
+	 */
+	switch (rf) {
+	case SX126X_RF_TX:
+		LOG_DBG("Enabling TX path");
+		sx126x_set_rx_enable(0);
+		sx126x_set_tx_enable(1);
+		break;
+
+	case SX126X_RF_RX:
+		LOG_DBG("Enabling RX path");
+		sx126x_set_tx_enable(0);
+		sx126x_set_rx_enable(1);
+		break;
+
+	default:
+		LOG_DBG("RF switch idle");
+		sx126x_set_rx_enable(0);
+		sx126x_set_tx_enable(0);
+		break;
+	}
+}
+
+static void sx126x_track_rf_state_pre(RadioCommands_t cmd)
+{
+	/* Switch to TX mode _before_ the chip receives the
+	 * opcode. This ensures that the RF switch is ready when the
+	 * chip starts transmitting.
+	 *
+	 * See sx126x_track_rf_state_post for the corresponding
+	 * function that switches the RF switch to idle/RX.
+	 */
+	switch (cmd) {
+	case RADIO_SET_TX:
+	case RADIO_SET_TXCONTINUOUSWAVE:
+	case RADIO_SET_TXCONTINUOUSPREAMBLE:
+		sx126x_set_rf_state(SX126X_RF_TX);
+		break;
+	default:
+		break;
+	}
+}
+
+static void sx126x_track_rf_state_post(RadioCommands_t cmd)
+{
+	/* Transitions to the idle or RX state need to be made _after_
+	 * the radio has received the opcode. This ensures that we
+	 * don't switch off the TX path before the chip has stopped
+	 * transmitting.
+	 */
+	switch (cmd) {
+	case RADIO_SET_RX:
+	case RADIO_SET_RXDUTYCYCLE:
+	case RADIO_SET_CAD:
+		sx126x_set_rf_state(SX126X_RF_RX);
+		break;
+	case RADIO_SET_SLEEP:
+	case RADIO_SET_STANDBY:
+	case RADIO_SET_FS:
+		sx126x_set_rf_state(SX126X_RF_IDLE);
+		break;
+	default:
+		break;
+	}
+}
+
+/* We need to know if the radio has been configured for continuous RX
+ * to track the RF state acurately */
+extern bool RxContinuous;
+static void sx126x_track_rf_state_irq()
+{
+	uint16_t irq_reg;
+
+	irq_reg = SX126xGetIrqStatus();
+
+        if (irq_reg & (IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT)) {
+		LOG_DBG("TX done / timeout RF switch transition");
+		sx126x_set_rf_state(SX126X_RF_IDLE);
+	}
+
+	if (irq_reg & IRQ_RX_DONE) {
+		if (!RxContinuous) {
+			LOG_DBG("RX done RF switch transition");
+			/* Only go to idle if using single-shot RX. */
+			sx126x_set_rf_state(SX126X_RF_IDLE);
+		}
+	}
+}
 
 static int sx126x_spi_transceive(uint8_t *req_tx, uint8_t *req_rx,
 				 size_t req_len, void *data_tx, void *data_rx,
@@ -208,9 +340,13 @@ uint8_t SX126xReadCommand(RadioCommands_t opcode,
 
 	LOG_DBG("Issuing opcode 0x%x (data size: %" PRIx16 ")",
 		opcode, size);
+
+	sx126x_track_rf_state_pre(opcode);
 	sx126x_spi_transceive(tx_req, rx_req, sizeof(rx_req),
 			      NULL, buffer, size);
 	LOG_DBG("-> status: 0x%" PRIx8, rx_req[1]);
+	sx126x_track_rf_state_post(opcode);
+
 	return rx_req[1];
 }
 
@@ -222,7 +358,10 @@ void SX126xWriteCommand(RadioCommands_t opcode, uint8_t *buffer, uint16_t size)
 
 	LOG_DBG("Issuing opcode 0x%x w. %" PRIu16 " bytes of data",
 		opcode, size);
+
+	sx126x_track_rf_state_pre(opcode);
 	sx126x_spi_transceive(req, NULL, sizeof(req), buffer, NULL, size);
+	sx126x_track_rf_state_post(opcode);
 }
 
 void SX126xReadBuffer(uint8_t offset, uint8_t *buffer, uint8_t size)
@@ -304,6 +443,12 @@ void SX126xIoTcxoInit(void)
 #endif
 }
 
+void SX126xIoRfSwitchInit(void)
+{
+	LOG_DBG("Configuring DIO2");
+	SX126xSetDio2AsRfSwitchCtrl(DIO2_TX_ENABLE);
+}
+
 void SX126xReset(void)
 {
 	LOG_DBG("Resetting radio");
@@ -356,6 +501,9 @@ void SX126xWakeup(void)
 static void sx126x_dio1_irq_work_handler(struct k_work *work)
 {
 	LOG_DBG("Processing DIO1 interrupt");
+
+	sx126x_track_rf_state_irq();
+
 	if (!dev_data.radio_dio_irq) {
 		LOG_WRN("DIO1 interrupt without valid HAL IRQ callback.");
 		return;
@@ -433,6 +581,30 @@ static int sx126x_lora_init(struct device *dev)
 			   GPIO_OUTPUT_ACTIVE | GPIO_ANTENNA_ENABLE_FLAGS);
 #endif
 
+#if HAVE_GPIO_RX_ENABLE
+	dev_data.rx_enable = device_get_binding(GPIO_RX_ENABLE_LABEL);
+	if (!dev_data.rx_enable) {
+		LOG_ERR("Cannot get pointer to %s device",
+			GPIO_RX_ENABLE_LABEL);
+		return -EIO;
+	}
+
+	gpio_pin_configure(dev_data.rx_enable, GPIO_RX_ENABLE_PIN,
+			   GPIO_OUTPUT_INACTIVE | GPIO_RX_ENABLE_FLAGS);
+#endif
+
+#if HAVE_GPIO_TX_ENABLE
+	dev_data.tx_enable = device_get_binding(GPIO_TX_ENABLE_LABEL);
+	if (!dev_data.tx_enable) {
+		LOG_ERR("Cannot get pointer to %s device",
+			GPIO_TX_ENABLE_LABEL);
+		return -EIO;
+	}
+
+	gpio_pin_configure(dev_data.tx_enable, GPIO_TX_ENABLE_PIN,
+			   GPIO_OUTPUT_INACTIVE | GPIO_TX_ENABLE_FLAGS);
+#endif
+
 	dev_data.spi = device_get_binding(DT_INST_BUS_LABEL(0));
 	if (!dev_data.spi) {
 		LOG_ERR("Cannot get pointer to %s device",
@@ -456,6 +628,8 @@ static int sx126x_lora_init(struct device *dev)
 	dev_data.spi_cfg.operation = SPI_WORD_SET(8) | SPI_TRANSFER_MSB;
 	dev_data.spi_cfg.frequency = DT_INST_PROP(0, spi_max_frequency);
 	dev_data.spi_cfg.slave = DT_INST_REG_ADDR(0);
+
+	dev_data.rf_state = SX126X_RF_IDLE;
 
 	ret = sx12xx_init(dev);
 	if (ret < 0) {
