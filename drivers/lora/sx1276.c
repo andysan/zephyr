@@ -80,6 +80,8 @@ BUILD_ASSERT(0, "None of rfo-enable-gpios, pa-boost-enable-gpios and "
 #define SX1276_REG_PA_DAC			0x4d
 #define SX1276_REG_VERSION			0x42
 
+#define SX1276_PA_CONFIG_MAX_POWER_SHIFT	4
+
 extern DioIrqHandler *DioIrq[];
 
 struct sx1276_dio {
@@ -137,6 +139,17 @@ struct sx1276_data {
 	s8_t snr;
 	s16_t rssi;
 } dev_data;
+
+static int8_t clamp_i8(int8_t x, int8_t min, int8_t max)
+{
+	if (x < min) {
+		return min;
+	} else if (x > max) {
+		return max;
+	} else {
+		return x;
+	}
+}
 
 bool SX1276CheckRfFrequency(uint32_t frequency)
 {
@@ -443,44 +456,42 @@ void SX1276SetRfTxPower(int8_t power)
 		return;
 	}
 
-	pa_config = (pa_config & RF_PACONFIG_MAX_POWER_MASK) | 0x70;
+	pa_config &= RF_PACONFIG_MAX_POWER_MASK;
+	pa_config &= RF_PACONFIG_OUTPUTPOWER_MASK;
 	pa_config &= RF_PACONFIG_PASELECT_MASK;
+
+	pa_dac &= RF_PADAC_20DBM_MASK;
+
+	if (SX1276_PA_OUTPUT(power) == SX1276_PA_BOOST) {
+		power = clamp_i8(power, 2, 20);
+
+		pa_config |= RF_PACONFIG_PASELECT_PABOOST;
+		if (power > 17) {
+			pa_dac |= RF_PADAC_20DBM_ON;
+			pa_config |= (power - 5) & 0x0F;
+		} else {
+			pa_dac |= RF_PADAC_20DBM_OFF;
+			pa_config |= (power - 2) & 0x0F;
+		}
+	} else {
+		power = clamp_i8(power, -4, 15);
+
+		pa_dac |= RF_PADAC_20DBM_OFF;
+		if (power > 0) {
+			/* Set the power range to 0 -- 10.8+0.6*7 dBm. */
+			pa_config |= 7 << SX1276_PA_CONFIG_MAX_POWER_SHIFT;
+			pa_config |= (power & 0x0F);
+		} else {
+			/* Set the power range to -4.2 -- 10.8+0.6*0 dBm */
+			pa_config |= 0 << SX1276_PA_CONFIG_MAX_POWER_SHIFT;
+			pa_config |= ((power + 4) & 0x0F);
+		}
+	}
 
 #if DT_INST_NODE_HAS_PROP(0, rfo_enable_gpios) &&	\
 	DT_INST_NODE_HAS_PROP(0, pa_boost_enable_gpios)
 	dev_data.tx_power = power;
 #endif
-
-	if (SX1276_PA_OUTPUT(power) == SX1276_PA_BOOST) {
-		pa_config |= RF_PACONFIG_PASELECT_PABOOST;
-
-		if (power > 17) {
-			pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) |
-				RF_PADAC_20DBM_ON;
-			power -= 3;
-		} else {
-			pa_dac = (pa_dac & RF_PADAC_20DBM_MASK) |
-				RF_PADAC_20DBM_OFF;
-		}
-
-		if (power > 17) {
-			power = 17;
-		} else if (power < 2) {
-			power = 2;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-			((power - 2) & 0x0F);
-	} else {
-		if (power < -1) {
-			power = -1;
-		} else if (power > 14) {
-			power = 14;
-		}
-
-		pa_config = (pa_config & RF_PACONFIG_OUTPUTPOWER_MASK) |
-				     ((power + 1) & 0x0F);
-	}
 
 	ret = sx1276_write(SX1276_REG_PA_CONFIG, &pa_config, 1);
 	if (ret < 0) {
