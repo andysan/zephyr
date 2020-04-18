@@ -82,7 +82,7 @@ uint32_t RtcSetTimerContext(void)
 
 uint32_t RtcMs2Tick(uint32_t milliseconds)
 {
-	return counter_us_to_ticks(dev_data.counter, (milliseconds / 1000));
+	return counter_us_to_ticks(dev_data.counter, (milliseconds * 1000));
 }
 
 uint32_t RtcTick2Ms(uint32_t tick)
