@@ -11,6 +11,11 @@
 
 #include "sx12xx_common.h"
 
+/* Declare the timer handler from LoRaMAC-Node here to avoid pulling
+ * in the entire system/timer.h header.
+ */
+void TimerIrqHandler(void);
+
 #define LOG_LEVEL CONFIG_LORA_LOG_LEVEL
 #include <logging/log.h>
 LOG_MODULE_REGISTER(sx12xx);
@@ -57,14 +62,27 @@ u32_t RtcGetMinimumTimeout(void)
 	return 3;
 }
 
+void sx12xx_rtc_alarm(struct device *dev, u8_t chan_id, u32_t ticks,
+		      void *user_data)
+{
+	TimerIrqHandler();
+}
+
 void RtcSetAlarm(uint32_t timeout)
 {
-	struct counter_alarm_cfg alarm_cfg;
-
-	alarm_cfg.flags = 0;
-	alarm_cfg.ticks = timeout;
+	struct counter_alarm_cfg alarm_cfg = {
+		.callback = &sx12xx_rtc_alarm,
+		.user_data = NULL,
+		.ticks = timeout,
+		.flags = 0,
+	};
 
 	counter_set_channel_alarm(dev_data.counter, 0, &alarm_cfg);
+}
+
+uint32_t RtcGetTimerContext(void)
+{
+	return dev_data.rtc_timer_context;
 }
 
 uint32_t RtcSetTimerContext(void)
