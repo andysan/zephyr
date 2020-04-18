@@ -200,6 +200,11 @@ int sx12xx_lora_init(struct device *dev)
 		return -EIO;
 	}
 
+	if (!counter_is_counting_up(dev_data.counter)) {
+		LOG_ERR("Unsupported RTC: RTC is counting down");
+		return -EIO;
+	}
+
 	k_sem_init(&dev_data.data_sem, 0, UINT_MAX);
 
 	return 0;
