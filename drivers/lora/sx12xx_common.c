@@ -44,6 +44,21 @@ uint32_t RtcGetTimerElapsedTime(void)
 	return ticks;
 }
 
+uint32_t RtcGetTimerValue(void)
+{
+	u32_t ticks;
+	int err;
+
+	err = counter_get_value(dev_data.counter, &ticks);
+	if (err) {
+		LOG_ERR("Failed to read counter value (err %d)", err);
+		return 0;
+	}
+
+	return ticks;
+}
+
+
 u32_t RtcGetMinimumTimeout(void)
 {
 	/* TODO: Get this value from counter driver */
@@ -68,6 +83,11 @@ uint32_t RtcSetTimerContext(void)
 uint32_t RtcMs2Tick(uint32_t milliseconds)
 {
 	return counter_us_to_ticks(dev_data.counter, (milliseconds / 1000));
+}
+
+uint32_t RtcTick2Ms(uint32_t tick)
+{
+	return counter_ticks_to_us(dev_data.counter, tick) / 1000;
 }
 
 void DelayMsMcu(uint32_t ms)
