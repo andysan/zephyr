@@ -22,27 +22,10 @@ static struct sx12xx_data {
 	u8_t rx_len;
 	s8_t snr;
 	s16_t rssi;
+
+	u32_t rtc_timer_context;
 } dev_data;
 
-
-void RtcStopAlarm(void)
-{
-	counter_stop(dev_data.counter);
-}
-
-uint32_t RtcGetTimerElapsedTime(void)
-{
-	u32_t ticks;
-	int err;
-
-	err = counter_get_value(dev_data.counter, &ticks);
-	if (err) {
-		LOG_ERR("Failed to read counter value (err %d)", err);
-		return 0;
-	}
-
-	return ticks;
-}
 
 uint32_t RtcGetTimerValue(void)
 {
@@ -58,6 +41,15 @@ uint32_t RtcGetTimerValue(void)
 	return ticks;
 }
 
+void RtcStopAlarm(void)
+{
+	counter_cancel_channel_alarm(dev_data.counter, 0);
+}
+
+uint32_t RtcGetTimerElapsedTime(void)
+{
+	return RtcGetTimerValue() - dev_data.rtc_timer_context;
+}
 
 u32_t RtcGetMinimumTimeout(void)
 {
@@ -77,7 +69,8 @@ void RtcSetAlarm(uint32_t timeout)
 
 uint32_t RtcSetTimerContext(void)
 {
-	return 0;
+	dev_data.rtc_timer_context = RtcGetTimerValue();
+	return dev_data.rtc_timer_context;
 }
 
 uint32_t RtcMs2Tick(uint32_t milliseconds)
