@@ -188,16 +188,30 @@ int sx12xx_lora_config(struct device *dev, struct lora_modem_config *config)
 	Radio.SetChannel(config->frequency);
 
 	if (config->tx) {
-		Radio.SetTxConfig(MODEM_LORA, config->tx_power, 0,
+		Radio.SetTxConfig(MODEM_LORA, config->tx_power,
+				  0 /* fdev */,
 				  config->bandwidth, config->datarate,
 				  config->coding_rate, config->preamble_len,
-				  false, true, 0, 0, false, 4000);
+				  false /* fixLen */,
+				  true /* crcOn */,
+				  false /* freqHopOn */,
+				  0 /* hopPeriod */,
+				  false /* iqInverted */,
+				  4000 /* timeout (ms) */);
 	} else {
 		/* TODO: Get symbol timeout value from config parameters */
 		Radio.SetRxConfig(MODEM_LORA, config->bandwidth,
 				  config->datarate, config->coding_rate,
-				  0, config->preamble_len, 10, false, 0,
-				  false, 0, 0, false, true);
+				  0 /* bandwidthAfc */,
+				  config->preamble_len,
+				  10 /* symbTimeout */,
+				  false /* fixLen */,
+				  0 /* payloadLen */,
+				  true /* crcOn */,
+				  false /* freqHopOn */,
+				  0 /* hopPeriod */,
+				  false /* iqInverted */,
+				  true /* rxContinuous */);
 	}
 
 	return 0;
