@@ -7,13 +7,14 @@
 
 #define DT_DRV_COMPAT semtech_sx1276
 
-#include <drivers/counter.h>
 #include <drivers/gpio.h>
 #include <drivers/lora.h>
 #include <drivers/spi.h>
 #include <zephyr.h>
 
+/* LoRaMac-node specific includes */
 #include <sx1276/sx1276.h>
+#include <timer.h>
 
 #define LOG_LEVEL CONFIG_LORA_LOG_LEVEL
 #include <logging/log.h>
@@ -82,6 +83,7 @@ BUILD_ASSERT(0, "None of rfo-enable-gpios, pa-boost-enable-gpios and "
 
 #define SX1276_PA_CONFIG_MAX_POWER_SHIFT	4
 
+static u32_t saved_time;
 extern DioIrqHandler *DioIrq[];
 
 struct sx1276_dio {
@@ -105,8 +107,7 @@ static const struct sx1276_dio sx1276_dios[] = { SX1276_DIO_GPIO_INIT(0) };
 
 #define SX1276_MAX_DIO ARRAY_SIZE(sx1276_dios)
 
-struct sx1276_data {
-	struct device *counter;
+static struct sx1276_data {
 	struct device *reset;
 #if DT_INST_NODE_HAS_PROP(0, antenna_enable_gpios)
 	struct device *antenna_enable;
@@ -133,7 +134,10 @@ struct sx1276_data {
 	struct device *dio_dev[SX1276_MAX_DIO];
 	struct k_work dio_work[SX1276_MAX_DIO];
 	struct k_sem data_sem;
+	struct k_timer timer;
 	RadioEvents_t sx1276_event;
+	/* TODO: Use Non-volatile memory for backup */
+	volatile u32_t backup_reg[2];
 	u8_t *rx_buf;
 	u8_t rx_len;
 	s8_t snr;
@@ -151,15 +155,10 @@ static s8_t clamp_s8(s8_t x, s8_t min, s8_t max)
 	}
 }
 
-bool SX1276CheckRfFrequency(uint32_t frequency)
+bool SX1276CheckRfFrequency(u32_t frequency)
 {
 	/* TODO */
 	return true;
-}
-
-void RtcStopAlarm(void)
-{
-	counter_stop(dev_data.counter);
 }
 
 static inline void sx1276_antenna_enable(int val)
@@ -230,6 +229,11 @@ void SX1276SetBoardTcxo(u8_t state)
 #endif
 }
 
+u32_t SX1276GetBoardTcxoWakeupTime(void)
+{
+	return TCXO_POWER_STARTUP_DELAY_MS;
+}
+
 void SX1276SetAntSw(u8_t opMode)
 {
 	switch (opMode) {
@@ -266,57 +270,74 @@ void SX1276Reset(void)
 	k_sleep(K_MSEC(6));
 }
 
-void BoardCriticalSectionBegin(uint32_t *mask)
+void BoardCriticalSectionBegin(u32_t *mask)
 {
 	*mask = irq_lock();
 }
 
-void BoardCriticalSectionEnd(uint32_t *mask)
+void BoardCriticalSectionEnd(u32_t *mask)
 {
 	irq_unlock(*mask);
 }
 
-uint32_t RtcGetTimerElapsedTime(void)
+u32_t RtcGetTimerValue(void)
 {
-	u32_t ticks;
-	int err;
+	return k_ms_to_ticks_ceil32(k_uptime_get_32());
+}
 
-	err = counter_get_value(dev_data.counter, &ticks);
-	if (err) {
-		LOG_ERR("Failed to read counter value (err %d)", err);
-		return 0;
-	}
-
-	return ticks;
+u32_t RtcGetTimerElapsedTime(void)
+{
+	return (k_ms_to_ticks_ceil32(k_uptime_get_32()) - saved_time);
 }
 
 u32_t RtcGetMinimumTimeout(void)
 {
-	/* TODO: Get this value from counter driver */
-	return 3;
+	return 1;
 }
 
-void RtcSetAlarm(uint32_t timeout)
+void RtcStopAlarm(void)
 {
-	struct counter_alarm_cfg alarm_cfg;
-
-	alarm_cfg.flags = 0;
-	alarm_cfg.ticks = timeout;
-
-	counter_set_channel_alarm(dev_data.counter, 0, &alarm_cfg);
+	k_timer_stop(&dev_data.timer);
 }
 
-uint32_t RtcSetTimerContext(void)
+#ifdef CONFIG_LORAWAN
+static void timer_callback(struct k_timer *_timer)
 {
-	return 0;
-}
+	ARG_UNUSED(_timer);
 
-uint32_t RtcMs2Tick(uint32_t milliseconds)
+	TimerIrqHandler();
+}
+#endif
+
+void RtcSetAlarm(u32_t timeout)
 {
-	return counter_us_to_ticks(dev_data.counter, (milliseconds / 1000));
+	k_timer_start(&dev_data.timer, k_ticks_to_ms_floor32(timeout),
+		      K_NO_WAIT);
 }
 
-void DelayMsMcu(uint32_t ms)
+u32_t RtcSetTimerContext(void)
+{
+	saved_time = k_ms_to_ticks_ceil32(k_uptime_get_32());
+
+	return saved_time;
+}
+
+u32_t RtcGetTimerContext(void)
+{
+	return saved_time;
+}
+
+u32_t RtcMs2Tick(uint32_t milliseconds)
+{
+	return k_ms_to_ticks_ceil32(milliseconds);
+}
+
+u32_t RtcTick2Ms(uint32_t tick)
+{
+	return k_ticks_to_ms_floor32(tick);
+}
+
+void DelayMsMcu(u32_t ms)
 {
 	k_sleep(ms);
 }
@@ -326,6 +347,28 @@ static void sx1276_dio_work_handle(struct k_work *work)
 	int dio = work - dev_data.dio_work;
 
 	(*DioIrq[dio])(NULL);
+}
+
+u32_t RtcGetCalendarTime(uint16_t *milliseconds)
+{
+	u32_t now = k_uptime_get_32();
+
+	*milliseconds = now;
+
+	/* Return in seconds */
+	return now / MSEC_PER_SEC;
+}
+
+void RtcBkupWrite(u32_t data0, uint32_t data1)
+{
+	dev_data.backup_reg[0] = data0;
+	dev_data.backup_reg[1] = data1;
+}
+
+void RtcBkupRead(u32_t *data0, uint32_t *data1)
+{
+	*data0 = dev_data.backup_reg[0];
+	*data1 = dev_data.backup_reg[1];
 }
 
 static void sx1276_irq_callback(struct device *dev,
@@ -606,6 +649,8 @@ const struct Radio_s Radio = {
 	.Random = SX1276Random,
 	.SetRxConfig = SX1276SetRxConfig,
 	.SetTxConfig = SX1276SetTxConfig,
+	.CheckRfFrequency = SX1276CheckRfFrequency,
+	.TimeOnAir = SX1276GetTimeOnAir,
 	.Send = SX1276Send,
 	.Sleep = SX1276SetSleep,
 	.Standby = SX1276SetStby,
@@ -615,6 +660,8 @@ const struct Radio_s Radio = {
 	.WriteBuffer = SX1276WriteBuffer,
 	.ReadBuffer = SX1276ReadBuffer,
 	.SetMaxPayloadLength = SX1276SetMaxPayloadLength,
+	.SetPublicNetwork = SX1276SetPublicNetwork,
+	.GetWakeupTime = SX1276GetWakeupTime,
 	.IrqProcess = NULL,
 	.RxBoosted = NULL,
 	.SetRxDutyCycle = NULL,
@@ -754,13 +801,11 @@ static int sx1276_lora_init(struct device *dev)
 		return -EIO;
 	}
 
-	dev_data.counter = device_get_binding(DT_RTC_0_NAME);
-	if (!dev_data.counter) {
-		LOG_ERR("Cannot get pointer to %s device", DT_RTC_0_NAME);
-		return -EIO;
-	}
-
 	k_sem_init(&dev_data.data_sem, 0, UINT_MAX);
+
+#ifdef CONFIG_LORAWAN
+	k_timer_init(&dev_data.timer, timer_callback, NULL);
+#endif
 
 	dev_data.sx1276_event.TxDone = sx1276_tx_done;
 	dev_data.sx1276_event.RxDone = sx1276_rx_done;
