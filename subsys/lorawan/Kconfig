@@ -55,4 +55,17 @@ config LORAMAC_REGION_RU864
 
 endchoice
 
+choice
+	prompt "LoRaWAN key management implentation"
+	default LORAMAC_SE_SEMTECH
+	help
+	  Select the implementation of key storage / secure element.
+
+config LORAMAC_SE_SEMTECH
+	bool "Semtech soft SE"
+	help
+	  Use Semtech's reference implementation of a software key management.
+
+endchoice
+
 endif # LORAWAN
