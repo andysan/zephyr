@@ -32,3 +32,5 @@ elseif(CONFIG_LORAMAC_REGION_RU864)
 endif()
 
 zephyr_library_sources_ifdef(CONFIG_LORAWAN lorawan.c)
+
+zephyr_library_sources_ifdef(CONFIG_LORAMAC_SE_ZEPHYR soft_se.c)

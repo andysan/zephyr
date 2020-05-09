@@ -66,6 +66,32 @@ config LORAMAC_SE_SEMTECH
 	help
 	  Use Semtech's reference implementation of a software key management.
 
+config LORAMAC_SE_ZEPHYR
+	bool "Zephyr soft SE [EXPERIMENTAL]"
+	depends on CRYPTO
+	select TINYCRYPT
+	select TINYCRYPT_AES
+	select TINYCRYPT_AES_CMAC
+	select ENTROPY_GENERATOR
+	help
+	  Implement the SE in Zephyr
+
 endchoice
+
+if LORAMAC_SE_ZEPHYR
+
+config LORAMAC_SE_CRYPTO_DEV_NAME
+	string "Crypto device name used for secure element"
+	default ""
+
+config LORAMAC_SE_DEV_EUI_RO
+	bool "Treat device EUI as read only"
+	default n
+
+config LORAMAC_SE_JOIN_EUI_RO
+	bool "Treat join EUI as read only"
+	default n
+
+endif # LORAMAC_SE_ZEPHYR
 
 endif # LORAWAN
