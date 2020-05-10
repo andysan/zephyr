@@ -99,3 +99,7 @@ arduino_i2c: &i2c1 {};
 &usb {
 	status = "okay";
 };
+
+&iwdg {
+	status = "okay";
+};

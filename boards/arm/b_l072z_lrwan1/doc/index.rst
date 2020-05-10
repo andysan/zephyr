@@ -141,6 +141,8 @@ The Zephyr B-L072Z-LRWAN1 Discovery board configuration supports the following h
 +-----------+------------+-------------------------------------+
 | USB       | on-chip    | usb                                 |
 +-----------+------------+-------------------------------------+
+| WATCHDOG  | on-chip    | independent watchdog                |
++-----------+------------+-------------------------------------+
 
 Other hardware features are not yet supported on this Zephyr port.
 
