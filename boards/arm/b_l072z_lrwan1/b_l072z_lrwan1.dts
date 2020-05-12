@@ -16,6 +16,7 @@
 		zephyr,shell-uart = &usart2;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+		zephyr,code-partition = &code_partition;
 	};
 
 	leds {
@@ -85,4 +86,20 @@ arduino_i2c: &i2c1 {};
 
 &rtc {
 	status = "okay";
+};
+
+&flash {
+	status = "okay";
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		/* Set aside 32KiB for data at the end of the 192KiB flash */
+		storage_partition: partition@28000 {
+			label = "storage";
+			reg = <0x00028000 0x00008000>;
+		};
+	};
 };
