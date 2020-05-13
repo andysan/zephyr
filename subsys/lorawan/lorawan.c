@@ -35,15 +35,28 @@
 	#error "Atleast one LoRaWAN region should be selected"
 #endif
 
-#define LOG_LEVEL CONFIG_LORAWAN_LOG_LEVEL
+#define LORAWAN_PKT_MAX_LEN 0xff
+
+#define MIB_SET_OR_RETURN(req)					\
+	do {							\
+		LoRaMacStatus_t status;				\
+		status = LoRaMacMibSetRequestConfirm((req));	\
+		if (status != LORAMAC_STATUS_OK) {		\
+			return status;				\
+		}						\
+	} while(0)
+
 #include <logging/log.h>
-LOG_MODULE_REGISTER(lorawan);
+LOG_MODULE_REGISTER(lorawan, CONFIG_LORAWAN_LOG_LEVEL);
 
 K_SEM_DEFINE(mlme_confirm_sem, 0, 1);
 K_SEM_DEFINE(mcps_confirm_sem, 0, 1);
 
 K_MUTEX_DEFINE(lorawan_join_mutex);
 K_MUTEX_DEFINE(lorawan_send_mutex);
+
+static enum lorawan_datarate lorawan_datarate = LORAWAN_DR_0;
+static unsigned int lorawan_send_tries = 4;
 
 const char *status2str(int status)
 {
@@ -285,61 +298,78 @@ static void MlmeIndication(MlmeIndication_t *mlmeIndication)
 	last_mlme_indication_status = mlmeIndication->Status;
 }
 
-int lorawan_config(struct lorawan_mib_config *mib_config)
+int lorawan_config(const struct lorawan_config *config)
 {
 	MibRequestConfirm_t mibReq;
 
-	mibReq.Type = MIB_NWK_KEY;
-	mibReq.Param.NwkKey = mib_config->nwk_key;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
-	mibReq.Type = MIB_DEV_EUI;
-	mibReq.Param.DevEui = mib_config->dev_eui;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
-	mibReq.Type = MIB_JOIN_EUI;
-	mibReq.Param.JoinEui = mib_config->join_eui;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
-	mibReq.Type = MIB_DEVICE_CLASS;
-	mibReq.Param.Class = mib_config->lw_class;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
-	mibReq.Type = MIB_ADR;
-	mibReq.Param.AdrEnable = mib_config->adr_enable;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
-	mibReq.Type = MIB_PUBLIC_NETWORK;
-	mibReq.Param.EnablePublicNetwork = mib_config->pub_nw;
-	LoRaMacMibSetRequestConfirm(&mibReq);
-
 	mibReq.Type = MIB_SYSTEM_MAX_RX_ERROR;
-	mibReq.Param.SystemMaxRxError = mib_config->system_max_rs_error;
+	mibReq.Param.SystemMaxRxError = config->system_max_rs_error;
 	LoRaMacMibSetRequestConfirm(&mibReq);
+
+	lorawan_send_tries = config->send_retries;
 
 	return 0;
 }
 
-static LoRaMacStatus_t lorawan_join_otaa(enum lorawan_datarate datarate)
+int lorawan_restore_connection()
 {
-	MlmeReq_t mlmeReq;
-
-	mlmeReq.Type = MLME_JOIN;
-	mlmeReq.Req.Join.Datarate = datarate;
-
-	return LoRaMacMlmeRequest(&mlmeReq);
+	/* TODO: Unimplemented */
+	return -ENOENT;
 }
 
-int lorawan_join_network(enum lorawan_datarate datarate,
-			 enum lorawan_act_type mode)
+
+static LoRaMacStatus_t lorawan_join_otaa(
+	const struct lorawan_join_config *join)
+{
+	MlmeReq_t mlme_join = {
+		.Type = MLME_JOIN,
+		.Req.Join.Datarate = lorawan_datarate,
+	};
+
+	if (join->dev_eui) {
+		MibRequestConfirm_t req = {
+			.Type = MIB_DEV_EUI,
+			.Param.DevEui = join->dev_eui,
+		};
+		MIB_SET_OR_RETURN(&req);
+	}
+
+	if (join->otaa.join_eui) {
+		MibRequestConfirm_t req = {
+			.Type = MIB_JOIN_EUI,
+			.Param.JoinEui = join->otaa.join_eui,
+		};
+		MIB_SET_OR_RETURN(&req);
+	}
+
+	if (join->otaa.nwk_key) {
+		MibRequestConfirm_t req = {
+			.Type = MIB_NWK_KEY,
+			.Param.NwkKey = join->otaa.nwk_key,
+		};
+		MIB_SET_OR_RETURN(&req);
+	}
+
+	if (join->otaa.app_key) {
+		MibRequestConfirm_t req = {
+			.Type = MIB_APP_KEY,
+			.Param.NwkKey = join->otaa.app_key,
+		};
+		MIB_SET_OR_RETURN(&req);
+	}
+
+	return LoRaMacMlmeRequest(&mlme_join);
+}
+
+int lorawan_join_network(const struct lorawan_join_config *join_req)
 {
 	LoRaMacStatus_t status;
 	int ret = 0;
 
 	k_mutex_lock(&lorawan_join_mutex, K_FOREVER);
 
-	if (mode == LORAWAN_ACT_OTAA) {
-		status = lorawan_join_otaa(datarate);
+	if (join_req->mode == LORAWAN_ACT_OTAA) {
+		status = lorawan_join_otaa(join_req);
 		if (status != LORAMAC_STATUS_OK) {
 			LOG_ERR("OTAA join failed: %s",
 				log_strdup(status2str(status)));
@@ -368,8 +398,32 @@ out:
 	return ret;
 }
 
-int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
-		 u8_t len, bool confirm, u8_t tries)
+int lorawan_set_class(enum lorawan_class dev_class)
+{
+	/* TODO: Unimplemented */
+	if (dev_class == LORAWAN_CLASS_A) {
+		return 0;
+	}
+	return -ENOENT;
+}
+
+int lorawan_set_datarate(enum lorawan_datarate dr, bool adr)
+{
+	MibRequestConfirm_t req = {
+		.Type = MIB_ADR,
+		.Param.AdrEnable = adr,
+	};
+
+	if (LoRaMacMibSetRequestConfirm(&req) != LORAMAC_STATUS_OK) {
+		return -EFAULT;
+	}
+
+	lorawan_datarate = dr;
+
+	return 0;
+}
+
+int lorawan_send(u8_t port, void *data, size_t len, lorawan_send_flags_t flags)
 {
 	LoRaMacStatus_t status;
 	McpsReq_t mcpsReq;
@@ -377,7 +431,7 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 	int ret = 0;
 	bool empty_frame = false;
 
-	if (data == NULL) {
+	if (data == NULL || len > LORAWAN_PKT_MAX_LEN) {
 		return -EINVAL;
 	}
 
@@ -398,21 +452,21 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 		mcpsReq.Type = MCPS_UNCONFIRMED;
 		mcpsReq.Req.Unconfirmed.fBuffer = NULL;
 		mcpsReq.Req.Unconfirmed.fBufferSize = 0;
-		mcpsReq.Req.Unconfirmed.Datarate = DR_0;
+		mcpsReq.Req.Unconfirmed.Datarate = lorawan_datarate;
 	} else {
-		if (confirm == false) {
+		if (!(flags & LW_SEND_CONFIRMED)) {
 			mcpsReq.Type = MCPS_UNCONFIRMED;
 			mcpsReq.Req.Unconfirmed.fPort = port;
 			mcpsReq.Req.Unconfirmed.fBuffer = data;
 			mcpsReq.Req.Unconfirmed.fBufferSize = len;
-			mcpsReq.Req.Unconfirmed.Datarate = datarate;
+			mcpsReq.Req.Unconfirmed.Datarate = lorawan_datarate;
 		} else {
 			mcpsReq.Type = MCPS_CONFIRMED;
 			mcpsReq.Req.Confirmed.fPort = port;
 			mcpsReq.Req.Confirmed.fBuffer = data;
 			mcpsReq.Req.Confirmed.fBufferSize = len;
-			mcpsReq.Req.Confirmed.NbTrials = tries;
-			mcpsReq.Req.Confirmed.Datarate = datarate;
+			mcpsReq.Req.Confirmed.NbTrials = lorawan_send_tries;
+			mcpsReq.Req.Confirmed.Datarate = lorawan_datarate;
 		}
 	}
 
@@ -434,7 +488,7 @@ int lorawan_send(u8_t port, enum lorawan_datarate datarate, u8_t *data,
 	}
 
 	/* Wait for send confirmation */
-	if (confirm) {
+	if (flags & LW_SEND_CONFIRMED) {
 		/*
 		 * We can be sure that the semaphore will be released for
 		 * both success and failure cases after a specific time period.
