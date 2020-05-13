@@ -220,6 +220,45 @@ static LoRaMacEventInfoStatus_t last_mlme_confirm_status;
 static LoRaMacEventInfoStatus_t last_mcps_indication_status;
 static LoRaMacEventInfoStatus_t last_mlme_indication_status;
 
+static lorawan_recv_callback_t default_listener = NULL;
+
+#define LW_RECV_PORT_ILLEGAL LW_RECV_PORT_ANY
+
+struct lorawan_port_listener {
+	u8_t port;
+	lorawan_recv_callback_t cb;
+};
+
+static struct lorawan_port_listener port_listener[
+	CONFIG_LORAWAN_MAX_LISTENERS] = {};
+
+static struct lorawan_port_listener *get_listener(u8_t port)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(port_listener); i++) {
+		if (port_listener[i].port == port) {
+			return &port_listener[i];
+		}
+	}
+
+	return NULL;
+}
+
+static void notify_listeners(u8_t port, void *buf, size_t size)
+{
+	struct lorawan_port_listener *l = get_listener(port);
+
+	if (l && l->cb) {
+		l->cb(port, buf, size);
+	} else if (default_listener) {
+		LOG_DBG("No listener for port %i, using default.", (int)port);
+		default_listener(port, buf, size);
+	} else {
+		LOG_WRN("No listener registered for port %i", (int)port);
+	}
+}
+
 static void OnMacProcessNotify(void)
 {
 	LoRaMacProcess();
@@ -253,10 +292,11 @@ static void McpsIndication(McpsIndication_t *mcpsIndication)
 
 	/* TODO: Check MCPS Indication type */
 	if (mcpsIndication->RxData == true) {
-		if (mcpsIndication->BufferSize != 0) {
-			LOG_DBG("Rx Data: %s",
-				log_strdup(mcpsIndication->Buffer));
-		}
+		LOG_DBG("Rx Data on port %i", (int)mcpsIndication->Port);
+		LOG_HEXDUMP_DBG(mcpsIndication->Buffer,
+				mcpsIndication->BufferSize, "Data");
+		notify_listeners(mcpsIndication->Port, mcpsIndication->Buffer,
+				 mcpsIndication->BufferSize);
 	}
 
 	last_mcps_indication_status = mcpsIndication->Status;
@@ -555,6 +595,36 @@ int lorawan_send(u8_t port, void *data, size_t len, lorawan_send_flags_t flags)
 out:
 	k_mutex_unlock(&lorawan_send_mutex);
 	return ret;
+}
+
+int lorawan_listen(u8_t port, lorawan_recv_callback_t cb)
+{
+	struct lorawan_port_listener *l;
+
+	if (port == LW_RECV_PORT_ANY) {
+		default_listener = cb;
+		return 0;
+	}
+
+	/* Is there a listener or do we need to allocate one? */
+	l = get_listener(port);
+	if (!l) {
+		l = get_listener(LW_RECV_PORT_ILLEGAL);
+	}
+
+	if (!l) {
+		return -ENOMEM;
+	}
+
+	if (cb) {
+		l->port = port;
+		l->cb = cb;
+	} else {
+		l->port = LW_RECV_PORT_ILLEGAL;
+		l->cb = NULL;
+	}
+
+	return 0;
 }
 
 static int lorawan_init(struct device *dev)
