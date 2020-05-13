@@ -61,6 +61,8 @@ struct lorawan_config {
 	unsigned int send_retries;
 };
 
+typedef unsigned int lorawan_send_flags_t;
+
 /** Request a an acknowledgement from the server */
 #define LW_SEND_CONFIRMED BIT(0)
 
@@ -70,13 +72,15 @@ struct lorawan_config {
 /**
  * @brief LoRaWAN join parameters for over-the-Air activation (OTAA)
  *
+ * Note that all of the fields use LoRaWAN 1.1 terminology.
+ *
  * All parameters are optional if a secure element is present in which
  * case the values stored in the secure element will be used instead.
  */
 struct lorawan_join_otaa {
-	u8_t *app_key;
-	u8_t *nwk_key;
 	u8_t *join_eui;
+	u8_t *nwk_key;
+	u8_t *app_key;
 };
 
 struct lorawan_join_abp10 {
@@ -113,11 +117,11 @@ typedef void (*lorawan_recv_callback_t)(u8_t port, const void *data,
  *
  * Configure the LoRaWAN stack using MIB (Mac Information Base) parameters.
  *
- * @param mib_config MIB configuration
+ * @param config MIB configuration
  *
  * @return 0 if successful, negative errno code if failure
  */
-int lorawan_config(struct lorawan_config *config);
+int lorawan_config(const struct lorawan_config *config);
 
 /**
  * @brief Restore connection from persistent storage
@@ -154,7 +158,7 @@ int lorawan_join_network(const struct lorawan_join_config *join_req);
  *
  * @return 0 if successful, negative errno code if failure
  */
-int lorawan_set_class(lorawan_class dev_class);
+int lorawan_set_class(enum lorawan_class dev_class);
 
 /**
  * @brief Set the default data rate
@@ -172,7 +176,7 @@ int lorawan_set_class(lorawan_class dev_class);
  *
  * @return 0 if successful, negative errno code if failure
  */
-int lorawan_set_data_rate(lorawan_datarate dr, bool adr);
+int lorawan_set_datarate(enum lorawan_datarate dr, bool adr);
 
 /**
  * @brief Send data to the LoRaWAN network
@@ -189,7 +193,7 @@ int lorawan_set_data_rate(lorawan_datarate dr, bool adr);
  *
  * @return 0 if successful, negative errno code if failure
  */
-int lorawan_send(u8_t port, u8_t *data, u8_t len, unsigned int flags);
+int lorawan_send(u8_t port, void *data, size_t len, lorawan_send_flags_t flags);
 
 /**
  * @brief Register a data handler for a specific port
