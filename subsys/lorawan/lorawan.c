@@ -491,11 +491,30 @@ out:
 
 int lorawan_set_class(enum lorawan_class dev_class)
 {
-	/* TODO: Unimplemented */
-	if (dev_class == LORAWAN_CLASS_A) {
-		return 0;
+	LoRaMacStatus_t status;
+	MibRequestConfirm_t req = {
+		.Type = MIB_DEVICE_CLASS,
+	};
+
+	switch (dev_class) {
+	case LORAWAN_CLASS_A:
+		req.Param.Class = CLASS_A;
+		break;
+	case LORAWAN_CLASS_C:
+		req.Param.Class = CLASS_C;
+		break;
+	default:
+		return -EINVAL;
+	};
+
+	status = LoRaMacMibSetRequestConfirm(&req);
+	if (status != LORAMAC_STATUS_OK) {
+		LOG_ERR("Failed to set device class: %s",
+			status2str(status));
+		return mac_status_to_errno[status];
 	}
-	return -ENOENT;
+
+	return 0;
 }
 
 int lorawan_set_datarate(enum lorawan_datarate dr, bool adr)
