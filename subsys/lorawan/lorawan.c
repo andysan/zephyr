@@ -37,6 +37,9 @@
 
 #define LORAWAN_PKT_MAX_LEN 0xff
 
+/* Use version 1.0.3.0 for ABP */
+#define LORAWAN_ABP10_VERSION 0x01000300
+
 #define MIB_SET_OR_RETURN(req)					\
 	do {							\
 		LoRaMacStatus_t status;				\
@@ -361,6 +364,46 @@ static LoRaMacStatus_t lorawan_join_otaa(
 	return LoRaMacMlmeRequest(&mlme_join);
 }
 
+static LoRaMacStatus_t lorawan_join_abp10(
+	const struct lorawan_join_config *join)
+{
+	MibRequestConfirm_t req;
+
+	req.Type = MIB_ABP_LORAWAN_VERSION;
+	req.Param.AbpLrWanVersion.Value = LORAWAN_ABP10_VERSION;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_NET_ID;
+	req.Param.NetID = 0;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_DEV_ADDR;
+	req.Param.DevAddr = join->abp10.dev_addr;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_F_NWK_S_INT_KEY;
+	req.Param.FNwkSIntKey = join->abp10.nwk_skey;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_S_NWK_S_INT_KEY;
+	req.Param.SNwkSIntKey = join->abp10.nwk_skey;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_NWK_S_ENC_KEY;
+	req.Param.NwkSEncKey = join->abp10.nwk_skey;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_APP_S_KEY;
+	req.Param.AppSKey = join->abp10.app_skey;
+	MIB_SET_OR_RETURN(&req);
+
+	req.Type = MIB_NETWORK_ACTIVATION;
+	req.Param.NetworkActivation = ACTIVATION_TYPE_ABP;
+	MIB_SET_OR_RETURN(&req);
+
+	return LORAMAC_STATUS_OK;
+}
+
 int lorawan_join_network(const struct lorawan_join_config *join_req)
 {
 	LoRaMacStatus_t status;
@@ -387,6 +430,14 @@ int lorawan_join_network(const struct lorawan_join_config *join_req)
 		k_sem_take(&mlme_confirm_sem, K_FOREVER);
 		if (last_mlme_confirm_status != LORAMAC_EVENT_INFO_STATUS_OK) {
 			ret = mac_event_info_to_errno[last_mlme_confirm_status];
+			goto out;
+		}
+	} else if (join_req->mode == LORAWAN_ACT_ABP10) {
+		status = lorawan_join_abp10(join_req);
+		if (status != LORAMAC_STATUS_OK) {
+			LOG_ERR("ABP join failed: %s",
+				log_strdup(status2str(status)));
+			ret = mac_status_to_errno[status];
 			goto out;
 		}
 	} else {

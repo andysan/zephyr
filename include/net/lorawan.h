@@ -85,7 +85,7 @@ struct lorawan_join_otaa {
 
 struct lorawan_join_abp10 {
 	/** Device address on the network */
-	u8_t dev_addr[3];
+	u32_t dev_addr;
 	/** Application session key */
 	u8_t *app_skey;
 	/** Network session key */
