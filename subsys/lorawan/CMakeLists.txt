@@ -33,3 +33,4 @@ endif()
 
 zephyr_library_sources_ifdef(CONFIG_LORAWAN lorawan.c)
 zephyr_library_sources_ifdef(CONFIG_LORAWAN lw_priv.c)
+zephyr_library_sources_ifdef(CONFIG_LORAWAN_STATE_STORAGE state_settings.c)

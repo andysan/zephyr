@@ -111,6 +111,30 @@ int lorawan_join(const struct lorawan_join_config *config);
 int lorawan_start(void);
 
 /**
+ * @brief Restore connection from persistent storage
+ *
+ * This function can be called before calling lorawan_start() to
+ * resume a previously suspended connection. If this function fails,
+ * the stack will have to be started using the lorawan_start() and
+ * subsequent lorawan_join() call.
+ *
+ * @return 0 if successful, negative errno code if failure
+ */
+int lorawan_resume(void);
+
+/**
+ * @brief Stop the stack and store the persistent state
+ *
+ * If the stack has been built with support for state storage, enough
+ * state to restore a connection without a full join request can be
+ * stored to persistent storage. Call this function to stop the stack
+ * and store the state.
+ *
+ * @return 0 if successful, negative errno code if failure
+ */
+int lorawan_suspend(void);
+
+/**
  * @brief Send data to the LoRaWAN network
  *
  * Send data to the connected LoRaWAN network.

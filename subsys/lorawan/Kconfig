@@ -24,6 +24,14 @@ config LORAWAN_SYSTEM_MAX_RX_ERROR
 	  System Max Rx timing error value in ms to be used by LoRaWAN stack
 	  for calculating the RX1/RX2 window timing.
 
+config LORAWAN_STATE_STORAGE
+	bool "Enable support for storing the MAC state [EXPERIMENTAL]"
+	default n
+	depends on SETTINGS
+	help
+	  Enable support for storing the MAC state to persistent storage using
+	  the settings subsystem.
+
 choice
 	prompt "LoRaWAN Region Selection"
 	default LORAMAC_REGION_IN865

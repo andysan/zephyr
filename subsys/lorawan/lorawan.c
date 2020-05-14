@@ -400,6 +400,20 @@ out:
 	return ret;
 }
 
+#ifndef CONFIG_LORAWAN_STATE_STORAGE
+
+int lorawan_resume(void)
+{
+	return -ENOENT;
+}
+
+int lorawan_suspend(void)
+{
+	return -ENOENT;
+}
+
+#endif
+
 int lorawan_start(void)
 {
 	LoRaMacStatus_t status;
