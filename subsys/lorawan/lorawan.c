@@ -354,13 +354,6 @@ int lorawan_config(const struct lorawan_config *config)
 	return 0;
 }
 
-int lorawan_restore_connection()
-{
-	/* TODO: Unimplemented */
-	return -ENOENT;
-}
-
-
 static LoRaMacStatus_t lorawan_join_otaa(
 	const struct lorawan_join_config *join)
 {
@@ -646,6 +639,34 @@ int lorawan_listen(u8_t port, lorawan_recv_callback_t cb)
 	return 0;
 }
 
+int lorawan_start()
+{
+	LoRaMacStatus_t status;
+
+	status = LoRaMacStart();
+	if (status != LORAMAC_STATUS_OK) {
+		LOG_ERR("Failed to start the LoRaMAC stack: %s",
+			status2str(status));
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+#ifndef CONFIG_LORAWAN_SETTINGS
+
+int lorawan_resume()
+{
+	return -ENOENT;
+}
+
+int lorawan_suspend()
+{
+	return -ENOENT;
+}
+
+#endif
+
 static int lorawan_init(struct device *dev)
 {
 	LoRaMacStatus_t status;
@@ -666,8 +687,6 @@ static int lorawan_init(struct device *dev)
 			log_strdup(status2str(status)));
 		return -EINVAL;
 	}
-
-	LoRaMacStart();
 
 	LOG_DBG("LoRaMAC Initialized");
 

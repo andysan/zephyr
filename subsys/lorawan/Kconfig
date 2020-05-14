@@ -25,6 +25,15 @@ config LORAWAN_MAX_LISTENERS
 	  of port listeners. Configure this to the maximum number of ports you
 	  expect to listen to in parallel. Does not include the wildcard
 	  listener.
+
+config LORAWAN_SETTINGS
+	bool "Enable support for storing the MAC state"
+	default n
+	depends on SETTINGS
+	help
+	  Enable support for storing the MAC state to persistent storage using
+	  the settings subsystem.
+
 choice
 	prompt "LoRaWAN Region Selection"
 	default LORAMAC_REGION_IN865

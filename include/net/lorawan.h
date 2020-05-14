@@ -124,6 +124,13 @@ typedef void (*lorawan_recv_callback_t)(u8_t port, const void *data,
 int lorawan_config(const struct lorawan_config *config);
 
 /**
+ * @brief Start the stack
+ *
+ * @return 0 if successful, negative errno code if failure
+ */
+int lorawan_start();
+
+/**
  * @brief Restore connection from persistent storage
  *
  * If the stack has been built with support for the settings
@@ -132,9 +139,24 @@ int lorawan_config(const struct lorawan_config *config);
  * re-establish a connection, if the function fails a full join may be
  * required.
  *
+ * If this function fails, the stack will have to be started using the
+ * lorawan_start() call.
+ *
  * @return 0 if successful, negative errno code if failure
  */
-int lorawan_restore_connection();
+int lorawan_resume();
+
+/**
+ * @brief Stop the stack and store the persistent state
+ *
+ * If the stack has been built with support for the settings
+ * subsystem, enough state to restore a connection without a full join
+ * request will be stored to persistent storage. Call this function to
+ * stop the stack and store the state.
+ *
+ * @return 0 if successful, negative errno code if failure
+ */
+int lorawan_suspend();
 
 /**
  * @brief Join the LoRaWAN network
