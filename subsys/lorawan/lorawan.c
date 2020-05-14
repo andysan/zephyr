@@ -220,6 +220,8 @@ static LoRaMacEventInfoStatus_t last_mlme_confirm_status;
 static LoRaMacEventInfoStatus_t last_mcps_indication_status;
 static LoRaMacEventInfoStatus_t last_mlme_indication_status;
 
+struct lorawan_callbacks callbacks = {};
+
 static lorawan_recv_callback_t default_listener = NULL;
 
 #define LW_RECV_PORT_ILLEGAL LW_RECV_PORT_ANY
@@ -639,6 +641,26 @@ int lorawan_listen(u8_t port, lorawan_recv_callback_t cb)
 	return 0;
 }
 
+int lorawan_set_callbacks(const struct lorawan_callbacks *cbs)
+{
+	if (!cbs) {
+		return -EINVAL;
+	}
+
+	callbacks = *cbs;
+
+	return 0;
+}
+
+static u8_t get_battery_level()
+{
+	if (callbacks.get_battery_level) {
+		return callbacks.get_battery_level();
+	} else {
+		return LORAWAN_BATTERY_UNKNOWN;
+	}
+}
+
 int lorawan_start()
 {
 	LoRaMacStatus_t status;
@@ -675,7 +697,7 @@ static int lorawan_init(struct device *dev)
 	macPrimitives.MacMcpsIndication = McpsIndication;
 	macPrimitives.MacMlmeConfirm = MlmeConfirm;
 	macPrimitives.MacMlmeIndication = MlmeIndication;
-	macCallbacks.GetBatteryLevel = NULL;
+	macCallbacks.GetBatteryLevel = &get_battery_level;
 	macCallbacks.GetTemperatureLevel = NULL;
 	macCallbacks.NvmContextChange = NULL;
 	macCallbacks.MacProcessNotify = OnMacProcessNotify;

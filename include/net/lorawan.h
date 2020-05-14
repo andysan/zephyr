@@ -112,6 +112,39 @@ struct lorawan_join_config {
 typedef void (*lorawan_recv_callback_t)(u8_t port, const void *data,
 					size_t len);
 
+#define LORAWAN_BATTERY_UNKNOWN		0xff
+#define LORAWAN_BATTERY_EXTERNAL	0x00
+#define LORAWAN_BATTERY_MIN		0x01
+#define LORAWAN_BATTERY_MAX		0xfe
+
+struct lorawan_callbacks {
+	/**
+	 * @brief Return the current battery level of the node
+	 *
+	 * The MAC can inform the network of a node's battery
+	 * status. To enable this feature. register this callback and
+	 * return a value between LORAWAN_BATTER_MIN and
+	 * LORAWAN_BATTERY_MAX or LORAWAN_BATTERY_EXTERNAL if on
+	 * external power.
+	 *
+	 * This callback may be left as NULL in which case the battery
+	 * level will be treated as unknown.
+	 *
+	 * @return Current battery level, LORAWAN_BATTERY_UNKNOWN if
+	 * unknown.
+	 */
+	u8_t (*get_battery_level)();
+};
+
+/**
+ * @brief Setup callback handlers
+ *
+ * @param cbs Callback structure
+ *
+ * @return 0 if successful, negative errno code if failure
+ */
+int lorawan_set_callbacks(const struct lorawan_callbacks *cbs);
+
 /**
  * @brief Configure the LoRaWAN stack
  *
