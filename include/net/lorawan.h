@@ -55,7 +55,7 @@ enum lorawan_datarate {
 };
 
 struct lorawan_config {
-	u32_t system_max_rs_error;
+	u32_t system_max_rx_error;
 
 	/** Maximum number of re-transmissions for confirmed packets. */
 	unsigned int send_retries;

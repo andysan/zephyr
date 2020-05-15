@@ -348,7 +348,7 @@ int lorawan_config(const struct lorawan_config *config)
 	MibRequestConfirm_t mibReq;
 
 	mibReq.Type = MIB_SYSTEM_MAX_RX_ERROR;
-	mibReq.Param.SystemMaxRxError = config->system_max_rs_error;
+	mibReq.Param.SystemMaxRxError = config->system_max_rx_error;
 	LoRaMacMibSetRequestConfirm(&mibReq);
 
 	lorawan_send_tries = config->send_retries;
